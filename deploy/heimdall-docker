@@ -1,0 +1,32 @@
+#!/bin/sh
+# The only Docker actions Heimdall may perform. Installed root-owned at
+# /usr/local/libexec/heimdall/heimdall-docker and allowed via sudoers
+# (deploy/heimdall.sudoers), which pins the exact container names allowed.
+# The bot never gets full Docker socket access, which would be equivalent to root.
+set -eu
+
+DOCKER=/usr/bin/docker
+
+case "${1:-}" in
+  ps)
+    exec "$DOCKER" ps --all --format '{{json .}}'
+    ;;
+  stats)
+    exec "$DOCKER" stats --no-stream --format '{{json .}}'
+    ;;
+  restart)
+    # No --time: Docker uses the container's own stop timeout, which Compose
+    # sets from stop_grace_period so the world has time to save.
+    exec "$DOCKER" restart "${2:?container name required}"
+    ;;
+  logs)
+    # Follow the logs from the container's most recent start only, so a
+    # "Game server connected" line from before a restart isn't matched.
+    started=$("$DOCKER" inspect --format '{{.State.StartedAt}}' "${2:?container name required}")
+    exec "$DOCKER" logs --follow --since "$started" "$2" 2>&1
+    ;;
+  *)
+    echo "usage: heimdall-docker ps | stats | restart <container> | logs <container>" >&2
+    exit 2
+    ;;
+esac

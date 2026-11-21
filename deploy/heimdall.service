@@ -1,0 +1,26 @@
+[Unit]
+Description=Heimdall Discord bot
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=heimdall
+Group=heimdall
+EnvironmentFile=/etc/heimdall/heimdall.env
+ExecStart=/opt/heimdall/venv/bin/heimdall
+Restart=on-failure
+RestartSec=10
+
+# Keep Heimdall small and contained. A Python process using discord.py sits
+# around 40-60 MB; the cap stops a leak from starving Valheim.
+MemoryMax=150M
+CPUQuota=50%
+
+# Light hardening only. Heimdall runs the Docker helper through sudo, which
+# breaks under NoNewPrivileges/ProtectSystem/ProtectHome (sudo and the docker
+# CLI need to write state files), so those are deliberately left off.
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

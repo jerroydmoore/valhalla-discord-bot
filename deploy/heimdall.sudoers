@@ -1,0 +1,6 @@
+# Install to /etc/sudoers.d/heimdall (mode 0440). Validate with: visudo -cf <file>
+# The container name must match VALHEIM_CONTAINER in /etc/heimdall/heimdall.env.
+heimdall ALL=(root) NOPASSWD: /usr/local/libexec/heimdall/heimdall-docker ps, \
+                              /usr/local/libexec/heimdall/heimdall-docker stats, \
+                              /usr/local/libexec/heimdall/heimdall-docker restart valheim-valheim-1, \
+                              /usr/local/libexec/heimdall/heimdall-docker logs valheim-valheim-1

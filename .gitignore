@@ -1,0 +1,11 @@
+# Secrets (Discord bot token, etc.)
+.env
+.env.*
+!.env.example
+.envrc
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/

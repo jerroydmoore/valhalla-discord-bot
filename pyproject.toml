@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heimdall"
+version = "0.1.0"
+description = "Discord bot for checking on and controlling the Valhalla server"
+readme = "README.md"
+# Ubuntu 20.04 ships Python 3.8, so keep the code 3.8-compatible.
+requires-python = ">=3.8"
+dependencies = [
+    "discord.py>=2.3,<3",
+    "aiohttp>=3.8",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+heimdall = "heimdall.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
