@@ -10,6 +10,8 @@ from typing import Optional, Sequence
 
 import aiohttp
 
+from . import metrics
+
 log = logging.getLogger("heimdall.valheim")
 
 # status.json is refreshed every 10s; anything much older means the updater
@@ -67,50 +69,31 @@ def is_ready_line(line: str) -> bool:
 
 
 async def wait_until_ready(
-    helper: Sequence[str], container: str, timeout: float, retry_delay: float = 5
+    helper: Sequence[str], container: str, timeout: float, poll_interval: float = 5
 ) -> bool:
-    """Follow the container's logs (from its latest start) until the ready line
-    appears. Returns False if it doesn't within `timeout` seconds."""
+    """Check the container's logs (since its latest start) every
+    `poll_interval` seconds until the ready line appears. Returns False if it
+    doesn't within `timeout` seconds.
+
+    This polls rather than following the logs (`docker logs --follow`): a
+    follow never exits on its own, and stopping it through sudo can leave
+    docker running and Heimdall hung (see metrics.stop_process).
+    """
     deadline = time.monotonic() + timeout
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
         try:
-            if await asyncio.wait_for(_follow_once(helper, container), remaining):
+            out = await metrics.run_helper(
+                helper, "logs", container, timeout=min(30.0, max(remaining, 1.0))
+            )
+            if any(is_ready_line(line) for line in out.splitlines()):
                 return True
-        except asyncio.TimeoutError:
-            return False
-        except OSError as exc:
-            log.warning("Couldn't follow %s logs: %s", container, exc)
-        # The log stream ended (container stopped or crashed). Try again.
-        await asyncio.sleep(min(retry_delay, max(0, deadline - time.monotonic())))
-
-
-async def _follow_once(helper: Sequence[str], container: str) -> bool:
-    proc = await asyncio.create_subprocess_exec(
-        *helper,
-        "logs",
-        container,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        limit=1024 * 1024,  # Valheim can log very long lines
-    )
-    try:
-        assert proc.stdout is not None
-        while True:
-            try:
-                raw = await proc.stdout.readline()
-            except ValueError:  # a single line over the limit; skip it
-                continue
-            if not raw:
-                return False
-            if is_ready_line(raw.decode(errors="replace")):
-                return True
-    finally:
-        if proc.returncode is None:
-            proc.kill()
-        await proc.wait()
+        except (metrics.DockerError, OSError) as exc:
+            # e.g. the container is mid-restart and can't be inspected yet
+            log.info("Couldn't read %s logs yet: %s", container, exc)
+        await asyncio.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
 
 def _parse_time(value: object) -> Optional[datetime]:

@@ -58,6 +58,7 @@ def test_check_players_over_http():
         assert asyncio.run(check_players(url)).verdict == "players"
     finally:
         server.shutdown()
+        server.server_close()
 
 
 def test_check_players_unreachable_is_unknown():
@@ -75,28 +76,42 @@ def test_ready_line_matching():
 
 
 def _fake_helper(script):
-    # wait_until_ready appends "logs <container>"; python -c ignores the extra args.
+    # The helper is called as `<helper> logs <container>`; python -c ignores the extra args.
     return [sys.executable, "-c", script]
 
 
+READY = "Nov 20 23:21:21 supervisord: valheim-server 11/20/2026 23:21:21: Game server connected"
+
+
 def test_wait_until_ready_sees_line():
-    script = (
-        "import sys, time\n"
-        "print('Nov 20 23:20:00 supervisord: valheim-server starting'); sys.stdout.flush()\n"
-        "time.sleep(0.2)\n"
-        "print('Nov 20 23:21:21 supervisord: valheim-server 11/20/2026 23:21:21: Game server connected'); sys.stdout.flush()\n"
-        "time.sleep(30)\n"  # docker logs --follow never exits on its own
-    )
+    script = f"print('Nov 20 23:20:00 supervisord: valheim-server starting'); print({READY!r})"
     assert asyncio.run(wait_until_ready(_fake_helper(script), "valheim", timeout=10)) is True
 
 
 def test_wait_until_ready_times_out():
-    script = "import time; print('still loading', flush=True); time.sleep(30)"
-    assert asyncio.run(wait_until_ready(_fake_helper(script), "valheim", timeout=1)) is False
+    script = "print('still loading')"
+    result = asyncio.run(wait_until_ready(_fake_helper(script), "valheim", timeout=1, poll_interval=0.2))
+    assert result is False
 
 
-def test_wait_until_ready_retries_when_stream_ends():
-    # Each run exits without the line (like the container stopping); keeps retrying until timeout.
-    script = "print('container stopped')"
-    result = asyncio.run(wait_until_ready(_fake_helper(script), "valheim", timeout=1.5, retry_delay=0.2))
+def test_wait_until_ready_finds_line_on_a_later_poll(tmp_path):
+    # Each poll is a fresh `docker logs`; the line only shows up on the third one.
+    counter = tmp_path / "polls"
+    script = (
+        "import pathlib\n"
+        f"p = pathlib.Path({str(counter)!r})\n"
+        "n = int(p.read_text()) + 1 if p.exists() else 1\n"
+        "p.write_text(str(n))\n"
+        "print('loading')\n"
+        f"print({READY!r}) if n >= 3 else None\n"
+    )
+    result = asyncio.run(wait_until_ready(_fake_helper(script), "valheim", timeout=10, poll_interval=0.1))
+    assert result is True
+    assert counter.read_text() == "3"
+
+
+def test_wait_until_ready_survives_helper_errors():
+    # e.g. `docker inspect` failing while the container is mid-restart
+    script = "import sys; print('no such container', file=sys.stderr); sys.exit(1)"
+    result = asyncio.run(wait_until_ready(_fake_helper(script), "valheim", timeout=0.5, poll_interval=0.1))
     assert result is False

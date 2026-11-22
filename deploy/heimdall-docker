@@ -20,10 +20,11 @@ case "${1:-}" in
     exec "$DOCKER" restart "${2:?container name required}"
     ;;
   logs)
-    # Follow the logs from the container's most recent start only, so a
-    # "Game server connected" line from before a restart isn't matched.
+    # Print (not follow) the logs since the container's most recent start, so
+    # a "Game server connected" line from before a restart isn't matched.
+    # Heimdall polls this; a follow would never exit on its own.
     started=$("$DOCKER" inspect --format '{{.State.StartedAt}}' "${2:?container name required}")
-    exec "$DOCKER" logs --follow --since "$started" "$2" 2>&1
+    exec "$DOCKER" logs --since "$started" "$2" 2>&1
     ;;
   *)
     echo "usage: heimdall-docker ps | stats | restart <container> | logs <container>" >&2

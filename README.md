@@ -24,8 +24,8 @@ the Discord server check on, and control, apps running on a server labelled Valh
      since Heimdall can't tell whether anyone is playing.
 2. It posts a public announcement and restarts the container. Docker waits up
    to the Compose `stop_grace_period` (2m) for the world to save.
-3. It follows the container's logs for a line containing both `supervisord`
-   and `Game server connected`, e.g.
+3. Every 5 seconds it checks the container's logs since the restart for a
+   line containing both `supervisord` and `Game server connected`, e.g.
    `Nov 20 23:21:21 supervisord: valheim-server 11/20/2026 23:21:21: Game server connected`.
    When it appears, the announcement becomes *"Restart completed; the game
    server is ready for you to connect."* If it doesn't appear within 8 minutes,
@@ -58,7 +58,7 @@ The container name (`valheim-valheim-1` by default from Compose project
   can read host metrics directly.
 - It talks to Docker only through [`deploy/heimdall-docker`](deploy/heimdall-docker),
   a root-owned script that allows four actions: list containers, read
-  their stats, and restart or follow the logs of the Valheim container. A sudoers rule lets the `heimdall` user run
+  their stats, and restart or read the logs of the Valheim container. A sudoers rule lets the `heimdall` user run
   only those. Heimdall is never in the `docker` group (that would make it root).
 
 ## One-time Discord setup

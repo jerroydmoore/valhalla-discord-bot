@@ -1,8 +1,13 @@
+import asyncio
 import json
+import sys
+import time
 
 import pytest
 
 from heimdall.metrics import (
+    DockerError,
+    run_helper,
     merge_container_info,
     parse_cpu_percent,
     parse_mem_usage,
@@ -51,3 +56,18 @@ def test_merge_running_and_stopped_containers():
     assert valheim.cpu_cores == pytest.approx(0.62)
     assert valheim.mem_used == int(1.9 * 1024**3)
     assert containers[2].cpu_cores is None
+
+
+def test_run_helper_timeout_does_not_hang_on_orphaned_child():
+    # Like sudo -> docker: the helper's child keeps stdout open after the helper
+    # itself is stopped. Python 3.12's Process.wait() waits for that pipe, so
+    # Heimdall must give up rather than hang (the stuck-announcement bug).
+    script = (
+        "import subprocess, time\n"
+        "subprocess.Popen(['sleep', '15'])\n"  # inherits stdout
+        "time.sleep(15)\n"
+    )
+    started = time.monotonic()
+    with pytest.raises(DockerError, match="timed out"):
+        asyncio.run(run_helper([sys.executable, "-c", script], "logs", "valheim", timeout=0.5))
+    assert time.monotonic() - started < 8

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -15,6 +16,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import psutil
+
+log = logging.getLogger("heimdall.metrics")
 
 
 @dataclass(frozen=True)
@@ -84,13 +87,40 @@ async def run_helper(helper: Sequence[str], *args: str, timeout: float = 120) ->
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        await stop_process(proc)
         raise DockerError(f"`{' '.join(args)}` timed out after {timeout:.0f}s")
     if proc.returncode != 0:
         message = err.decode(errors="replace").strip() or f"exit code {proc.returncode}"
         raise DockerError(message)
     return out.decode(errors="replace")
+
+
+async def stop_process(proc: asyncio.subprocess.Process, grace: float = 5) -> None:
+    """Ask a helper process to stop, without ever hanging on it.
+
+    The helper runs via sudo, and its child (docker, running as root) can
+    outlive sudo and keep our pipes open. On Python 3.12+, Process.wait()
+    only returns once those pipes close, so an unbounded wait could hang
+    forever. SIGTERM lets sudo pass the signal on to docker; if that doesn't
+    work within `grace` seconds, give up on the process.
+    """
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), grace)
+    except asyncio.TimeoutError:
+        log.warning("Helper process %s didn't exit after SIGTERM; abandoning it", proc.pid)
+    finally:
+        # Close our ends of its pipes (a child may still hold the other ends)
+        # so the file descriptors aren't leaked. asyncio has no public API for
+        # this on a Process.
+        transport = getattr(proc, "_transport", None)
+        if transport is not None:
+            transport.close()
 
 
 async def collect_containers(helper: Sequence[str]) -> List[ContainerStats]:
