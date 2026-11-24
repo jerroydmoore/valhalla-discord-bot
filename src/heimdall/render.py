@@ -7,7 +7,7 @@ from typing import List, Optional
 import discord
 
 from .metrics import ContainerStats, HostStats
-from .valheim import PlayerCheck
+from .valheim import Join, PlayerCheck
 
 GREEN = discord.Colour(0x2ECC71)
 YELLOW = discord.Colour(0xF1C40F)
@@ -26,6 +26,7 @@ def status_embed(
     host_label: str,
     now: Optional[datetime] = None,
     players: Optional[PlayerCheck] = None,
+    player_names: Optional[List[str]] = None,
 ) -> discord.Embed:
     worst = max(host.cpu_percent, host.mem_percent, host.disk_percent)
     unhealthy = containers is None or any(c.state != "running" for c in containers)
@@ -69,19 +70,45 @@ def status_embed(
     )
     embed.add_field(name="⏱️ Uptime", value=fmt_duration(host.uptime_seconds), inline=False)
     if players is not None:
-        embed.add_field(name="⚔️ Valheim", value=players_text(players), inline=False)
+        embed.add_field(name="⚔️ Valheim", value=players_text(players, player_names), inline=False)
     embed.add_field(name="Apps", value=apps_text(containers, docker_error), inline=False)
     embed.set_footer(text=host_label)
     return embed
 
 
-def players_text(check: PlayerCheck) -> str:
+def players_text(check: PlayerCheck, names: Optional[List[str]] = None) -> str:
+    """status.json's count is authoritative; names come from the logs.
+
+    Names for players who joined before the logs Heimdall reads are missing,
+    so they're shown as "and N more". If the logs list more players than
+    status.json counts (a missed leave line), the names can't be trusted and
+    only the count is shown.
+    """
     if check.verdict in ("players", "empty"):
         n = check.player_count
-        return f"👥 **{n}** player{'' if n == 1 else 's'} online"
+        count_text = f"👥 **{n}** player{'' if n == 1 else 's'} online"
+        if n == 0 or not names or len(names) > n:
+            return count_text
+        listed = ", ".join(discord.utils.escape_markdown(name) for name in names)
+        more = n - len(names)
+        if more:
+            # "Bjorn and 1 more", "Bjorn, Astrid, and 1 more"
+            listed += f"{',' if len(names) > 1 else ''} and {more} more"
+        return truncate(f"👥 **{n}** online: {listed}", 1024)
     if check.verdict == "not_answering":
         return "⚠️ The game server isn't answering (still starting, or hung)"
     return f"⚠️ Couldn't read the player count: {truncate(check.detail, 200)}"
+
+
+def join_dm_text(joins: List[Join], check: PlayerCheck, names: List[str]) -> str:
+    """e.g. '🟢 Joined Valheim: **Bjorn** at <t:...:t>' plus who's online now.
+    <t:...:t> renders as a time in each reader's own time zone."""
+    joined = ", ".join(
+        f"**{discord.utils.escape_markdown(j.name)}**"
+        + (f" at <t:{int(j.at.timestamp())}:t>" if j.at else "")
+        for j in joins
+    )
+    return truncate(f"🟢 Joined Valheim: {joined}\n{players_text(check, names)}", 2000)
 
 
 def apps_text(containers: Optional[List[ContainerStats]], docker_error: Optional[str]) -> str:

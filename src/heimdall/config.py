@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 
@@ -17,6 +17,8 @@ class Config:
     status_url: str
     ready_timeout: float
     disconnect_timeout: float
+    notify_user_ids: List[int] = field(default_factory=list)
+    notify_poll_seconds: float = 900
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -38,7 +40,18 @@ class Config:
             status_url=os.environ.get("STATUS_URL", "http://127.0.0.1:9080/status.json"),
             ready_timeout=float(os.environ.get("READY_TIMEOUT_SECONDS", "480")),
             disconnect_timeout=float(os.environ.get("DISCONNECT_TIMEOUT_SECONDS", "300")),
+            notify_user_ids=_int_list("NOTIFY_USER_IDS"),
+            notify_poll_seconds=float(os.environ.get("NOTIFY_POLL_SECONDS", "900")),
         )
+
+
+def _int_list(name: str) -> List[int]:
+    """Comma- or space-separated Discord IDs."""
+    values = os.environ.get(name, "").replace(",", " ").split()
+    try:
+        return [int(v) for v in values]
+    except ValueError:
+        raise SystemExit(f"{name} must be Discord user IDs separated by commas, got {os.environ[name]!r}")
 
 
 def _optional_int(name: str) -> Optional[int]:

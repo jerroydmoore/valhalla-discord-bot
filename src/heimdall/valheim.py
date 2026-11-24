@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import aiohttp
 
@@ -94,6 +95,72 @@ async def wait_until_ready(
             # e.g. the container is mid-restart and can't be inspected yet
             log.info("Couldn't read %s logs yet: %s", container, exc)
         await asyncio.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
+
+
+# A character spawning in, e.g. (after Docker's --timestamps prefix)
+#   2026-11-24T20:01:02.123Z Nov 24 12:01:02 supervisord: valheim-server
+#   11/24/2026 12:01:02: Got character ZDOID from Bjorn : 3550347729:1
+# The first number identifies the player's connection. It's 0:0 when the
+# character dies; respawning logs the line again with the same first number.
+_JOIN_RE = re.compile(r"Got character ZDOID from (?P<name>.+?) : (?P<uid>-?\d+):-?\d+\s*$")
+# A player disconnecting: the server destroys the objects they owned, e.g.
+#   Destroying abandoned non persistent zdo 3550347729:3192 owner 3550347729
+_LEAVE_RE = re.compile(r"Destroying abandoned non persistent zdo -?\d+:-?\d+ owner (?P<uid>-?\d+)")
+
+
+@dataclass(frozen=True)
+class Join:
+    name: str
+    at: Optional[datetime]  # from Docker's --timestamps prefix
+
+
+@dataclass
+class Presence:
+    """Who the logs say is online, and when each of them joined."""
+
+    online: List[str] = field(default_factory=list)  # names, in join order
+    joins: List[Join] = field(default_factory=list)  # every join seen, oldest first
+
+    def joins_after(self, when: datetime) -> List[Join]:
+        return [j for j in self.joins if j.at is not None and j.at > when]
+
+
+def parse_presence(log_text: str) -> Presence:
+    """Replay join and leave lines to work out who is online.
+
+    Players who joined before the logs start (Heimdall reads at most the last
+    16 hours) are missing until they die and respawn, which logs their name
+    again; callers fill the gap from status.json's player_count.
+    """
+    online: Dict[str, str] = {}  # connection id -> character name
+    joins: List[Join] = []
+    for line in log_text.splitlines():
+        joined = _JOIN_RE.search(line)
+        if joined:
+            uid = joined.group("uid")
+            if uid == "0":  # died
+                continue
+            if uid not in online:
+                joins.append(Join(joined.group("name").strip(), _log_time(line)))
+            online[uid] = joined.group("name").strip()
+            continue
+        left = _LEAVE_RE.search(line)
+        if left:
+            online.pop(left.group("uid"), None)
+    return Presence(online=list(online.values()), joins=joins)
+
+
+async def read_presence(helper: Sequence[str], container: str) -> Presence:
+    return parse_presence(await metrics.run_helper(helper, "logs", container, timeout=30))
+
+
+def _log_time(line: str) -> Optional[datetime]:
+    """Docker's --timestamps prefix, e.g. 2026-11-24T20:13:26.266974356Z."""
+    try:
+        parsed = datetime.strptime(line[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc)
 
 
 def _parse_time(value: object) -> Optional[datetime]:

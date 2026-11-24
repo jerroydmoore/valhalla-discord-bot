@@ -7,8 +7,24 @@ the Discord server check on, and control, apps running on a server labelled Valh
 
 | Command                     | Who                         | What it does                                          |
 | --------------------------- | --------------------------- | ----------------------------------------------------- |
-| `/valhalla status`          | Everyone                    | Host CPU, memory, disk, uptime, Valheim players online, and per-container use. Only you see the reply; add `announce:True` to show it to the channel |
+| `/valhalla status`          | Everyone                    | Host CPU, memory, disk, uptime, Valheim players online (with names), and per-container use. Only you see the reply; add `announce:True` to show it to the channel |
 | `/valhalla restart Valheim` | Members of the restart role | Restarts Valheim, but only when nobody is playing     |
+
+### Player names and join DMs
+
+Valheim's status.json counts players but leaves their names blank, so
+Heimdall reads names from the container's logs (at most the last 16 hours):
+`Got character ZDOID from <name> : <id>:<n>` when a character spawns, and
+`Destroying abandoned non persistent zdo … owner <id>` when they disconnect.
+status.json's count stays authoritative: players who joined more than 16
+hours ago show as "and N more", e.g. `👥 3 online: Bjorn, Astrid, and 1 more`,
+and if the logs list more players than status.json counts, only the count is
+shown.
+
+Set `NOTIFY_USER_IDS` to get a DM when someone joins (not when they leave).
+Heimdall checks every `NOTIFY_POLL_SECONDS` (15 minutes) and reports joins
+by their log time, so a DM can arrive up to 15 minutes late, and someone who
+joins and leaves between checks is still reported.
 
 ### How a restart works
 

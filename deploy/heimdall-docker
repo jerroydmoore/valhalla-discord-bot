@@ -21,10 +21,15 @@ case "${1:-}" in
     ;;
   logs)
     # Print (not follow) the logs since the container's most recent start, so
-    # a "Game server connected" line from before a restart isn't matched.
-    # Heimdall polls this; a follow would never exit on its own.
+    # a "Game server connected" line from before a restart isn't matched,
+    # but at most the last 16 hours, to keep each read small. Heimdall polls
+    # this; a follow would never exit on its own. --timestamps prefixes each
+    # line with Docker's UTC time, which Heimdall uses to tell new joins apart.
     started=$("$DOCKER" inspect --format '{{.State.StartedAt}}' "${2:?container name required}")
-    exec "$DOCKER" logs --since "$started" "$2" 2>&1
+    since=$(date -d "$started" +%s)
+    floor=$(( $(date +%s) - 16 * 3600 ))
+    [ "$since" -lt "$floor" ] && since=$floor
+    exec "$DOCKER" logs --timestamps --since "$since" "$2" 2>&1
     ;;
   *)
     echo "usage: heimdall-docker ps | stats | restart <container> | logs <container>" >&2

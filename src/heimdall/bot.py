@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Optional
+from datetime import datetime, timezone
+from typing import List, Optional
 
 import discord
 from discord import app_commands
@@ -31,12 +32,15 @@ class Heimdall(discord.Client):
         # so systemd restarts the service.
         self.exit_code = 0
         self._watchdog_task: Optional[asyncio.Task] = None
+        self._join_task: Optional[asyncio.Task] = None
 
     async def setup_hook(self) -> None:
         # Created here so it binds to the running event loop (needed on 3.8/3.9).
         self.restart_lock = asyncio.Lock()
         # Keep a reference: asyncio only holds tasks weakly.
         self._watchdog_task = asyncio.create_task(self.watch_connection())
+        if self.config.notify_user_ids:
+            self._join_task = asyncio.create_task(self.watch_joins())
         if self.config.guild_id:
             guild = discord.Object(id=self.config.guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -81,6 +85,55 @@ class Heimdall(discord.Client):
                 os._exit(1)
             return
 
+    async def watch_joins(self) -> None:
+        """DM everyone in NOTIFY_USER_IDS when players join Valheim.
+
+        Checks the logs every NOTIFY_POLL_SECONDS and reports joins by their
+        log timestamps, so someone who joins and leaves between checks is
+        still reported. Joins from before Heimdall started aren't. Leaving
+        isn't reported.
+        """
+        await self.wait_until_ready()
+        reported_until = datetime.now(timezone.utc)
+        log.info(
+            "Will DM %d user(s) about Valheim joins, checking every %.0fs",
+            len(self.config.notify_user_ids), self.config.notify_poll_seconds,
+        )
+        while not self.is_closed():
+            await asyncio.sleep(self.config.notify_poll_seconds)
+            try:
+                reported_until = await self.report_joins(reported_until)
+            except Exception:
+                log.exception("Checking for Valheim joins failed")
+
+    async def report_joins(self, since: datetime) -> datetime:
+        """DM about joins logged after `since`; returns the new `since`."""
+        read_at = datetime.now(timezone.utc)
+        try:
+            presence = await valheim.read_presence(
+                self.config.docker_helper, self.config.valheim_container
+            )
+        except (metrics.DockerError, OSError) as exc:
+            # e.g. Valheim is mid-restart. Try again next time, from `since`.
+            log.warning("Couldn't read Valheim logs for joins: %s", exc)
+            return since
+        joins = presence.joins_after(since)
+        # Lines logged while the read ran may already be in this batch.
+        until = max([read_at] + [j.at for j in joins if j.at is not None])
+        if not joins:
+            return until
+        check = await valheim.check_players(self.config.status_url)
+        text = render.join_dm_text(joins, check, presence.online)
+        log.info("Players joined: %s", ", ".join(j.name for j in joins))
+        for user_id in self.config.notify_user_ids:
+            try:
+                user = self.get_user(user_id) or await self.fetch_user(user_id)
+                await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+            except discord.HTTPException as exc:
+                # e.g. DMs from server members are turned off, or no shared server
+                log.warning("Couldn't DM user %s: %s", user_id, exc)
+        return until
+
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
@@ -111,6 +164,7 @@ def build_commands(bot: Heimdall) -> app_commands.Group:
         loop = asyncio.get_running_loop()
         host_future = loop.run_in_executor(None, metrics.collect_host)
         players_task = asyncio.create_task(valheim.check_players(bot.config.status_url))
+        names_task = asyncio.create_task(online_names(bot, players_task))
         containers = None
         docker_error = None
         try:
@@ -121,7 +175,8 @@ def build_commands(bot: Heimdall) -> app_commands.Group:
         host = await host_future
         players = await players_task
         embed = render.status_embed(
-            host, containers, docker_error, bot.config.host_label, players=players
+            host, containers, docker_error, bot.config.host_label,
+            players=players, player_names=await names_task,
         )
         await interaction.followup.send(embed=embed, ephemeral=private)
 
@@ -215,6 +270,18 @@ def build_commands(bot: Heimdall) -> app_commands.Group:
             await announcement.edit(content=text, allowed_mentions=none)
 
     return group
+
+
+async def online_names(bot: Heimdall, players_task: "asyncio.Task[valheim.PlayerCheck]") -> Optional[List[str]]:
+    """Names of who's online, read from the logs only when someone is."""
+    if (await players_task).player_count == 0:
+        return None
+    try:
+        presence = await valheim.read_presence(bot.config.docker_helper, bot.config.valheim_container)
+    except (metrics.DockerError, OSError) as exc:
+        log.warning("Couldn't read Valheim logs for player names: %s", exc)
+        return None
+    return presence.online
 
 
 def plural(n: int, word: str) -> str:
