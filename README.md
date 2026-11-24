@@ -7,7 +7,7 @@ the Discord server check on, and control, apps running on a server labelled Valh
 
 | Command                     | Who                         | What it does                                          |
 | --------------------------- | --------------------------- | ----------------------------------------------------- |
-| `/valhalla status`          | Everyone                    | Host CPU, memory, disk, uptime, and per-container use |
+| `/valhalla status`          | Everyone                    | Host CPU, memory, disk, uptime, and per-container use. Only you see the reply; add `announce:True` to show it to the channel |
 | `/valhalla restart Valheim` | Members of the restart role | Restarts Valheim, but only when nobody is playing     |
 
 ### How a restart works

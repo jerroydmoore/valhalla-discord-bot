@@ -102,9 +102,12 @@ def build_commands(bot: Heimdall) -> app_commands.Group:
     group = app_commands.Group(name="valhalla", description="Check on and control the Valhalla server")
 
     @group.command(name="status", description="Show CPU, memory, disk, and app usage")
-    async def status(interaction: discord.Interaction) -> None:
+    @app_commands.describe(announce="Show the status to everyone in the channel (default: only you)")
+    async def status(interaction: discord.Interaction, announce: bool = False) -> None:
+        private = not announce
         # Sampling CPU takes ~1s and Docker ~2s; Discord wants a reply within 3s.
-        await interaction.response.defer(thinking=True)
+        # The deferred response decides who sees the reply.
+        await interaction.response.defer(ephemeral=private, thinking=True)
         loop = asyncio.get_running_loop()
         host_future = loop.run_in_executor(None, metrics.collect_host)
         containers = None
@@ -116,7 +119,7 @@ def build_commands(bot: Heimdall) -> app_commands.Group:
             docker_error = str(exc)
         host = await host_future
         embed = render.status_embed(host, containers, docker_error, bot.config.host_label)
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=private)
 
     @group.command(name="restart", description="Restart an app on Valhalla (only when nobody is playing)")
     @app_commands.describe(app="Which app to restart")
