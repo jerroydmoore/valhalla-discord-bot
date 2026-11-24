@@ -1,5 +1,6 @@
 from heimdall import render
 from heimdall.metrics import ContainerStats, HostStats
+from heimdall.valheim import PlayerCheck
 
 GiB = 1024**3
 
@@ -54,6 +55,19 @@ def test_docker_error_is_shown_not_raised():
     embed = render.status_embed(host(), None, "sudo: a password is required", "valhalla")
     assert embed.colour == render.YELLOW
     assert "Couldn't read Docker: sudo: a password is required" in fields(embed)["Apps"]
+
+
+def test_player_count_is_shown():
+    embed = render.status_embed(host(), [VALHEIM], None, "valhalla", players=PlayerCheck("players", 3))
+    field = next(f for f in embed.fields if f.name == "⚔️ Valheim")
+    assert "**3** players online" in field.value
+
+
+def test_players_text_variants():
+    assert render.players_text(PlayerCheck("empty", 0)) == "👥 **0** players online"
+    assert render.players_text(PlayerCheck("players", 1)) == "👥 **1** player online"
+    assert "isn't answering" in render.players_text(PlayerCheck("not_answering", detail="timeout"))
+    assert "connection refused" in render.players_text(PlayerCheck("unknown", detail="connection refused"))
 
 
 def test_bar_and_formatting():

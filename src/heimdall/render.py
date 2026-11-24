@@ -7,6 +7,7 @@ from typing import List, Optional
 import discord
 
 from .metrics import ContainerStats, HostStats
+from .valheim import PlayerCheck
 
 GREEN = discord.Colour(0x2ECC71)
 YELLOW = discord.Colour(0xF1C40F)
@@ -24,6 +25,7 @@ def status_embed(
     docker_error: Optional[str],
     host_label: str,
     now: Optional[datetime] = None,
+    players: Optional[PlayerCheck] = None,
 ) -> discord.Embed:
     worst = max(host.cpu_percent, host.mem_percent, host.disk_percent)
     unhealthy = containers is None or any(c.state != "running" for c in containers)
@@ -66,9 +68,20 @@ def status_embed(
         inline=False,
     )
     embed.add_field(name="⏱️ Uptime", value=fmt_duration(host.uptime_seconds), inline=False)
+    if players is not None:
+        embed.add_field(name="⚔️ Valheim", value=players_text(players), inline=False)
     embed.add_field(name="Apps", value=apps_text(containers, docker_error), inline=False)
     embed.set_footer(text=host_label)
     return embed
+
+
+def players_text(check: PlayerCheck) -> str:
+    if check.verdict in ("players", "empty"):
+        n = check.player_count
+        return f"👥 **{n}** player{'' if n == 1 else 's'} online"
+    if check.verdict == "not_answering":
+        return "⚠️ The game server isn't answering (still starting, or hung)"
+    return f"⚠️ Couldn't read the player count: {truncate(check.detail, 200)}"
 
 
 def apps_text(containers: Optional[List[ContainerStats]], docker_error: Optional[str]) -> str:

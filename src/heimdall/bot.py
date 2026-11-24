@@ -110,6 +110,7 @@ def build_commands(bot: Heimdall) -> app_commands.Group:
         await interaction.response.defer(ephemeral=private, thinking=True)
         loop = asyncio.get_running_loop()
         host_future = loop.run_in_executor(None, metrics.collect_host)
+        players_task = asyncio.create_task(valheim.check_players(bot.config.status_url))
         containers = None
         docker_error = None
         try:
@@ -118,7 +119,10 @@ def build_commands(bot: Heimdall) -> app_commands.Group:
             log.warning("Couldn't read Docker: %s", exc)
             docker_error = str(exc)
         host = await host_future
-        embed = render.status_embed(host, containers, docker_error, bot.config.host_label)
+        players = await players_task
+        embed = render.status_embed(
+            host, containers, docker_error, bot.config.host_label, players=players
+        )
         await interaction.followup.send(embed=embed, ephemeral=private)
 
     @group.command(name="restart", description="Restart an app on Valhalla (only when nobody is playing)")
