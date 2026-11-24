@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 import discord
@@ -9,8 +10,11 @@ from discord import app_commands
 
 from . import metrics, render, valheim
 from .config import Config
+from .watchdog import ConnectionWatchdog
 
 log = logging.getLogger("heimdall")
+
+WATCHDOG_CHECK_SECONDS = 30
 
 
 class Heimdall(discord.Client):
@@ -22,10 +26,17 @@ class Heimdall(discord.Client):
         self.tree.on_error = self.on_app_command_error
         self.restart_lock: Optional[asyncio.Lock] = None
         self.tree.add_command(build_commands(self))
+        self.watchdog = ConnectionWatchdog(config.disconnect_timeout)
+        # Non-zero when the watchdog shut the bot down; main() exits with it
+        # so systemd restarts the service.
+        self.exit_code = 0
+        self._watchdog_task: Optional[asyncio.Task] = None
 
     async def setup_hook(self) -> None:
         # Created here so it binds to the running event loop (needed on 3.8/3.9).
         self.restart_lock = asyncio.Lock()
+        # Keep a reference: asyncio only holds tasks weakly.
+        self._watchdog_task = asyncio.create_task(self.watch_connection())
         if self.config.guild_id:
             guild = discord.Object(id=self.config.guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -36,7 +47,39 @@ class Heimdall(discord.Client):
             log.info("Synced %d global command(s); may take up to an hour to appear", len(synced))
 
     async def on_ready(self) -> None:
+        self.watchdog.connected()
         log.info("Logged in as %s (%s)", self.user, getattr(self.user, "id", "?"))
+
+    async def on_resumed(self) -> None:
+        self.watchdog.connected()
+        log.info("Reconnected to Discord (session resumed)")
+
+    async def on_disconnect(self) -> None:
+        if self.watchdog.offline_for() == 0:
+            log.warning("Disconnected from Discord; discord.py will try to reconnect")
+        self.watchdog.disconnected()
+
+    async def watch_connection(self) -> None:
+        while not self.is_closed():
+            await asyncio.sleep(WATCHDOG_CHECK_SECONDS)
+            if not self.watchdog.overdue():
+                continue
+            if self.restart_lock is not None and self.restart_lock.locked():
+                # Let a Valheim restart finish updating its announcement
+                # (that goes over HTTP, which may still work).
+                continue
+            log.error(
+                "Disconnected from Discord for %.0fs; exiting so systemd restarts Heimdall",
+                self.watchdog.offline_for(),
+            )
+            self.exit_code = 1
+            try:
+                await asyncio.wait_for(self.close(), 15)
+            except Exception:
+                log.exception("Clean shutdown failed")
+            if not self.is_closed():
+                os._exit(1)
+            return
 
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError

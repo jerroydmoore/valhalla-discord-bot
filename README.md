@@ -61,6 +61,14 @@ The container name (`valheim-valheim-1` by default from Compose project
   their stats, and restart or read the logs of the Valheim container. A sudoers rule lets the `heimdall` user run
   only those. Heimdall is never in the `docker` group (that would make it root).
 
+### Riding out network outages
+
+discord.py reconnects by itself, but its retry delay grows to as much as
+~17 minutes. So if Heimdall can't reach Discord for 5 minutes
+(`DISCONNECT_TIMEOUT_SECONDS`), it exits and systemd restarts it, backing off
+from 10 seconds to at most 2 minutes, and never giving up. It waits for a
+Valheim restart that's in progress to finish before exiting.
+
 ## One-time Discord setup
 
 1. Go to <https://discord.com/developers/applications> → **New Application** → name it *Heimdall*.

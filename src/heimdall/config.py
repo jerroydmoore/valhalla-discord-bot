@@ -16,6 +16,7 @@ class Config:
     host_label: str
     status_url: str
     ready_timeout: float
+    disconnect_timeout: float
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -36,6 +37,7 @@ class Config:
             host_label=os.environ.get("HOST_LABEL", "valhalla"),
             status_url=os.environ.get("STATUS_URL", "http://127.0.0.1:9080/status.json"),
             ready_timeout=float(os.environ.get("READY_TIMEOUT_SECONDS", "480")),
+            disconnect_timeout=float(os.environ.get("DISCONNECT_TIMEOUT_SECONDS", "300")),
         )
 
 

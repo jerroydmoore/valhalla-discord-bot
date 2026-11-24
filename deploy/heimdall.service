@@ -2,6 +2,9 @@
 Description=Heimdall Discord bot
 After=network-online.target docker.service
 Wants=network-online.target
+# Never stop retrying: during a network outage Heimdall fails to start or
+# exits (see DISCONNECT_TIMEOUT_SECONDS) until Discord is reachable again.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -9,8 +12,12 @@ User=heimdall
 Group=heimdall
 EnvironmentFile=/etc/heimdall/heimdall.env
 ExecStart=/opt/heimdall/venv/bin/heimdall
-Restart=on-failure
+Restart=always
+# Back off from 10s to at most 2 minutes between restarts (systemd 254+,
+# e.g. Ubuntu 24.04; older versions ignore these and keep 10s).
 RestartSec=10
+RestartSteps=5
+RestartMaxDelaySec=2min
 
 # Keep Heimdall small and contained. A Python process using discord.py sits
 # around 40-60 MB; the cap stops a leak from starving Valheim.
